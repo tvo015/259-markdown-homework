@@ -2,12 +2,9 @@
 title: "Exploratory Data Analysis- Markdown Homework"
 author: "Tina Vo"
 date: "3/3/2021"
-output: html_document
+output: word_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 This project has two raw data files at different scales from a study of infants, children, and adults watching a series of 7 video clips. I wrote Steps 1 and 2 to import and merge the data, and kept them there for your reference. Skip down to Step 3 to work on EDA
 
 ### SOURCE DESCRIPTION
@@ -35,14 +32,95 @@ Columns:
 
 
 ### STEP 1: Read in AUC data
-
-Code stim as a factor
-```{r, echo=FALSE}
+Code `stim` as a factor
+<div class="hidecode"></div>
+```{r, warning=FALSE, message=FALSE, code_folding=show}
+library(tidyverse)
+library(here)
+library(knitr)
 auc <- read_csv(here("data_raw", "auc_bystim.csv"))
 stim_levels <- 1:7
 stim_labels <- c("Fallon","Feist","Pentatonix","Science","Rube","Plane","Dogs")
 auc <- auc %>% mutate(stim = factor(stim, levels = stim_levels, labels = stim_labels))
-
 ```
 
+### STEP 2: Read in participant info data
+Wrangle the ppt info data so that you can merge it into the auc data. Drop any data where the AUC values are missing. In the final, merged data, make the `watched` variable is coded as a factor with levels "seen" (1), "not seen" (2), "not sure" (3).  
+Write the cleaned file to `data_cleaned/` 
 
+Read in the ppt data and rename columns to be easier to work with
+```{r, warning=FALSE, message=FALSE, collapse=TRUE}
+ppt <- read_csv(here("data_raw","participants_info_full_headers.csv")) %>% 
+  rename(id = `participant ID`,
+         age_group = `Age group`,
+         precision = "Precision")
+```
+Each question about watching each video is a column, so pivot_longer. Use separate to get just the video name into it's own column. 
+```{r, warning=FALSE, message=FALSE}
+ppt_long <- ppt %>% pivot_longer(cols = starts_with("Seen"), names_to = "stim", values_to = "watched")
+ppt_long <- ppt_long %>% separate(stim, into = c(NA, "stim"))
+```
+Code stim and watched as factors
+```{r, warning=FALSE, message=FALSE}
+ppt_long <- ppt_long %>% mutate(
+  stim = factor(stim, levels = stim_labels, labels = stim_labels),
+  watched = factor(watched, levels = 1:3, labels = c("Yes","No","Not Sure")))
+```
+Join the ppt data to the AUC data (by id and by stim since each participant has observations for each stim)
+```{r, warning=FALSE, message=FALSE}
+ds <- left_join(auc, ppt_long, by = c("id", "stim"))
+ds <- ds %>% drop_na(AUC_sal:AUC_dist) #Drop participants for whom we don't have data for the DV
+```
+Write the data to file
+```{r, warning=FALSE, message=FALSE}
+ds %>% write_csv(here("data_cleaned","cleaned.csv"))
+```
+### STEP 3: EXPLORATORY DATA ANALYSIS
+## 3A PRECISION
+Visualize the distribution of precision to see if there are values above 2.5
+```{r, warning=FALSE, message=FALSE}
+ds %>% ggplot(aes(x = precision)) + geom_histogram() + geom_vline(xintercept = 2.5)
+##`stat_bin()` using `bins=30`. Pick better value with `binwidth`.
+```
+Create a summary to figure out which participants would we need to exclude if > 2.5 meant the data are unuseable? 
+```{r, warning=FALSE, message=FALSE}
+ds %>% group_by(id, age_group) %>% 
+  summarize(precision = mean(precision, na.RM = T)) %>% 
+  filter(precision > 2.5) %>% kable()
+## `summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+```
+```{r, warning=FALSE, message=FALSE}
+ds %>% filter(precision > 2.5) %>% kable()
+```
+Use a summary table and plots to investigate whether data equally precise for participants of different ages
+```{r, warning=FALSE, message=FALSE}
+ds %>% group_by(age_group) %>% summarize(across(precision, list(M = mean, MIN = min, MAX = max))) %>% kable()
+```
+```{r, warning=FALSE, message=FALSE}
+ds %>% ggplot(aes(x = age_group, y = precision)) + geom_boxplot() + geom_hline(yintercept = 2.5)
+```
+```{r, warning=FALSE, message=FALSE}
+ds %>% ggplot(aes(x = age, y = precision)) + geom_point() + geom_hline(yintercept = 2.5)
+```
+### 3B Age
+Convert age to years so that it can be more easily compared to age_group. Visualize age in years by `age_group` to see whether participants are the correct age for their group
+```{r, warning=FALSE, message=FALSE}
+ds <- ds %>% mutate(age_years = age/365.25)
+ds %>% group_by(id, age_group) %>% 
+  summarize(age_years = mean(age_years)) %>% 
+  ggplot(aes(y = age_group, x = age_years)) + geom_boxplot()
+## `summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+```
+Another option would be to facet by age group and to let the scales be "free" to get a better look
+```{r, warning=FALSE, message=FALSE}
+ds %>% group_by(id, age_group) %>% 
+  summarize(age_years = mean(age_years)) %>% 
+  ggplot(aes(y = age_years)) + 
+  geom_boxplot() + 
+  facet_wrap("age_group", scales = "free")
+## `summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+```
+Make a summary table of age in years by age group to check whether all participants' ages are correct
+```{r, warning=FALSE, message=FALSE}
+ds %>% group_by(age_group) %>% summarize(min_age = min(age_years), max_age = max(age_years))
+```
